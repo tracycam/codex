@@ -4,6 +4,7 @@ use crate::client_common::tools::ToolSpec;
 use crate::features::Feature;
 use crate::features::Features;
 use crate::tools::handlers::PLAN_TOOL;
+use crate::tools::handlers::SubagentHandler;
 use crate::tools::handlers::apply_patch::create_apply_patch_freeform_tool;
 use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
 use crate::tools::handlers::collab::DEFAULT_WAIT_TIMEOUT_MS;
@@ -541,6 +542,199 @@ fn create_close_agent_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "close_agent".to_string(),
         description: "Close an agent and return its last known status.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["id".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+// ============================================================================
+// Subagent Tools
+// ============================================================================
+
+fn create_spawn_subagent_tool() -> ToolSpec {
+    use codex_protocol::subagent::SubagentOutputType;
+    use codex_protocol::subagent::SubagentRole;
+
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "role".to_string(),
+        JsonSchema::String {
+            description: Some(format!(
+                "Role of the subagent. One of: {:?}, {:?}, {:?}, {:?}. Default: {:?}.",
+                SubagentRole::General,
+                SubagentRole::Review,
+                SubagentRole::Analyse,
+                SubagentRole::Plan,
+                SubagentRole::General
+            )),
+        },
+    );
+    properties.insert(
+        "overview".to_string(),
+        JsonSchema::String {
+            description: Some("Brief one-line context for the task.".to_string()),
+        },
+    );
+    properties.insert(
+        "goal".to_string(),
+        JsonSchema::String {
+            description: Some("Specific, verifiable goal for the subagent.".to_string()),
+        },
+    );
+    properties.insert(
+        "requirements".to_string(),
+        JsonSchema::Array {
+            items: Box::new(JsonSchema::String {
+                description: Some("A requirement or constraint.".to_string()),
+            }),
+            description: Some("List of requirements and constraints.".to_string()),
+        },
+    );
+    properties.insert(
+        "output_type".to_string(),
+        JsonSchema::String {
+            description: Some(format!(
+                "Expected output type. One of: {:?}, {:?}, {:?}, {:?}, {:?}. Default: {:?}.",
+                SubagentOutputType::Report,
+                SubagentOutputType::Diff,
+                SubagentOutputType::Code,
+                SubagentOutputType::Plan,
+                SubagentOutputType::Text,
+                SubagentOutputType::Text
+            )),
+        },
+    );
+    properties.insert(
+        "context_paths".to_string(),
+        JsonSchema::Array {
+            items: Box::new(JsonSchema::String {
+                description: Some("A file or directory path.".to_string()),
+            }),
+            description: Some("Context files and paths for the subagent.".to_string()),
+        },
+    );
+    properties.insert(
+        "additional_context".to_string(),
+        JsonSchema::String {
+            description: Some("Additional context or instructions.".to_string()),
+        },
+    );
+    properties.insert(
+        "background".to_string(),
+        JsonSchema::Boolean {
+            description: Some(
+                "When true, run the subagent in background (non-blocking). Default: false."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "timeout_ms".to_string(),
+        JsonSchema::Number {
+            description: Some(
+                "Timeout in milliseconds for synchronous execution. Default: 300000 (5 min)."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "session_id".to_string(),
+        JsonSchema::String {
+            description: Some("Optional session ID for multi-round fixes.".to_string()),
+        },
+    );
+    properties.insert(
+        "report_path".to_string(),
+        JsonSchema::String {
+            description: Some("Optional report path for review role.".to_string()),
+        },
+    );
+    properties.insert(
+        "plan_dir".to_string(),
+        JsonSchema::String {
+            description: Some("Optional plan directory for plan role.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "spawn_subagent".to_string(),
+        description: "Spawn a controlled subagent with depth tracking and role-based permissions. Supports background execution and synchronous wait.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["overview".to_string(), "goal".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_get_subagent_status_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "id".to_string(),
+        JsonSchema::String {
+            description: Some("Thread ID of the subagent.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "get_subagent_status".to_string(),
+        description: "Get the current status of a subagent.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["id".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_wait_subagent_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "id".to_string(),
+        JsonSchema::String {
+            description: Some("Thread ID of the subagent to wait on.".to_string()),
+        },
+    );
+    properties.insert(
+        "timeout_ms".to_string(),
+        JsonSchema::Number {
+            description: Some(
+                "Timeout in milliseconds. Default: 300000 (5 min), max: 1800000 (30 min)."
+                    .to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "wait_subagent".to_string(),
+        description: "Wait for a background subagent to complete.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["id".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_close_subagent_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "id".to_string(),
+        JsonSchema::String {
+            description: Some("Thread ID of the subagent to close.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "close_subagent".to_string(),
+        description: "Close a subagent and return its last known status.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
@@ -1270,6 +1464,17 @@ pub(crate) fn build_specs(
         builder.register_handler("send_input", collab_handler.clone());
         builder.register_handler("wait", collab_handler.clone());
         builder.register_handler("close_agent", collab_handler);
+
+        // Subagent tools (controlled recursive agents with depth tracking)
+        let subagent_handler = Arc::new(SubagentHandler);
+        builder.push_spec(create_spawn_subagent_tool());
+        builder.push_spec(create_get_subagent_status_tool());
+        builder.push_spec(create_wait_subagent_tool());
+        builder.push_spec(create_close_subagent_tool());
+        builder.register_handler("spawn_subagent", subagent_handler.clone());
+        builder.register_handler("get_subagent_status", subagent_handler.clone());
+        builder.register_handler("wait_subagent", subagent_handler.clone());
+        builder.register_handler("close_subagent", subagent_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {

@@ -400,6 +400,10 @@ pub(crate) struct TurnContext {
     pub(crate) codex_linux_sandbox_exe: Option<PathBuf>,
     pub(crate) tool_call_gate: Arc<ReadinessFlag>,
     pub(crate) truncation_policy: TruncationPolicy,
+    /// Subagent depth context for controlled recursive spawning.
+    pub(crate) subagent_depth: Option<codex_protocol::subagent::SubagentDepthContext>,
+    /// Subagent role for permission control.
+    pub(crate) subagent_role: Option<codex_protocol::subagent::SubagentRole>,
 }
 
 impl TurnContext {
@@ -559,6 +563,8 @@ impl Session {
             codex_linux_sandbox_exe: per_turn_config.codex_linux_sandbox_exe.clone(),
             tool_call_gate: Arc::new(ReadinessFlag::new()),
             truncation_policy: model_info.truncation_policy.into(),
+            subagent_depth: per_turn_config.subagent_depth,
+            subagent_role: per_turn_config.subagent_role,
         }
     }
 
@@ -2458,6 +2464,9 @@ async fn spawn_review_thread(
         codex_linux_sandbox_exe: parent_turn_context.codex_linux_sandbox_exe.clone(),
         tool_call_gate: Arc::new(ReadinessFlag::new()),
         truncation_policy: model_info.truncation_policy.into(),
+        // Review inherits parent subagent context
+        subagent_depth: parent_turn_context.subagent_depth,
+        subagent_role: parent_turn_context.subagent_role,
     };
 
     // Seed the child task with the review prompt as the initial user message.

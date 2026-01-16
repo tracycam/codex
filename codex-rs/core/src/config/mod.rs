@@ -384,6 +384,14 @@ pub struct Config {
 
     /// OTEL configuration (exporter type, endpoint, headers, etc.).
     pub otel: crate::config::types::OtelConfig,
+
+    /// Subagent depth context for controlled recursive spawning.
+    /// This field is set when the Config is used to spawn a subagent.
+    pub subagent_depth: Option<codex_protocol::subagent::SubagentDepthContext>,
+
+    /// Subagent role for this session.
+    /// This field is set when the Config is used to spawn a subagent.
+    pub subagent_role: Option<codex_protocol::subagent::SubagentRole>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1603,6 +1611,10 @@ impl Config {
                     metrics_exporter: OtelExporterKind::Statsig,
                 }
             },
+            // Subagent context is not set from config files; it's set programmatically
+            // when spawning a subagent.
+            subagent_depth: None,
+            subagent_role: None,
         };
         Ok(config)
     }

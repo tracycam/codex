@@ -790,6 +790,15 @@ pub enum EventMsg {
     CollabCloseBegin(CollabCloseBeginEvent),
     /// Collab interaction: close end.
     CollabCloseEnd(CollabCloseEndEvent),
+
+    /// Subagent: spawn begin.
+    SubagentSpawnBegin(SubagentSpawnBeginEvent),
+    /// Subagent: spawn end.
+    SubagentSpawnEnd(SubagentSpawnEndEvent),
+    /// Subagent: task complete (for background tasks).
+    SubagentTaskComplete(SubagentTaskCompleteEvent),
+    /// Subagent: progress update.
+    SubagentProgress(SubagentProgressEvent),
 }
 
 impl From<CollabAgentSpawnBeginEvent> for EventMsg {
@@ -2216,6 +2225,103 @@ pub struct CollabCloseEndEvent {
     /// Last known status of the receiver agent reported to the sender agent before
     /// the close.
     pub status: AgentStatus,
+}
+
+// ============================================================================
+// Subagent Events
+// ============================================================================
+
+/// Event emitted when a subagent spawn begins.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct SubagentSpawnBeginEvent {
+    /// Identifier for the subagent tool call.
+    pub call_id: String,
+    /// Thread ID of the parent agent.
+    pub parent_thread_id: ThreadId,
+    /// Role of the subagent being spawned.
+    pub role: crate::subagent::SubagentRole,
+    /// Depth context (current/max).
+    pub depth: crate::subagent::SubagentDepthContext,
+    /// Whether this is a background task.
+    pub background: bool,
+    /// Task overview.
+    pub overview: String,
+}
+
+/// Event emitted when a subagent spawn completes.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct SubagentSpawnEndEvent {
+    /// Identifier for the subagent tool call.
+    pub call_id: String,
+    /// Thread ID of the parent agent.
+    pub parent_thread_id: ThreadId,
+    /// Thread ID of the newly spawned subagent, if created.
+    pub subagent_thread_id: Option<ThreadId>,
+    /// Role of the subagent.
+    pub role: crate::subagent::SubagentRole,
+    /// Depth at which the subagent was spawned.
+    pub depth: u8,
+    /// Whether this is a background task.
+    pub background: bool,
+    /// Current status of the subagent.
+    pub status: AgentStatus,
+    /// Result if the subagent completed synchronously (non-background).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<crate::subagent::SubagentResult>,
+}
+
+/// Event emitted when a background subagent task completes.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct SubagentTaskCompleteEvent {
+    /// Identifier for the original subagent tool call.
+    pub call_id: String,
+    /// Thread ID of the parent agent.
+    pub parent_thread_id: ThreadId,
+    /// Thread ID of the subagent.
+    pub subagent_thread_id: ThreadId,
+    /// The result of the subagent task.
+    pub result: crate::subagent::SubagentResult,
+}
+
+/// Event for subagent progress updates.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct SubagentProgressEvent {
+    /// Thread ID of the subagent.
+    pub subagent_thread_id: ThreadId,
+    /// Thread ID of the parent agent.
+    pub parent_thread_id: ThreadId,
+    /// Progress message.
+    pub message: String,
+    /// Current phase/step (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    /// Progress percentage (0-100, optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_percent: Option<u8>,
+}
+
+impl From<SubagentSpawnBeginEvent> for EventMsg {
+    fn from(event: SubagentSpawnBeginEvent) -> Self {
+        EventMsg::SubagentSpawnBegin(event)
+    }
+}
+
+impl From<SubagentSpawnEndEvent> for EventMsg {
+    fn from(event: SubagentSpawnEndEvent) -> Self {
+        EventMsg::SubagentSpawnEnd(event)
+    }
+}
+
+impl From<SubagentTaskCompleteEvent> for EventMsg {
+    fn from(event: SubagentTaskCompleteEvent) -> Self {
+        EventMsg::SubagentTaskComplete(event)
+    }
+}
+
+impl From<SubagentProgressEvent> for EventMsg {
+    fn from(event: SubagentProgressEvent) -> Self {
+        EventMsg::SubagentProgress(event)
+    }
 }
 
 #[cfg(test)]
