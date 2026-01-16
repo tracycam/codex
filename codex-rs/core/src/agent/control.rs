@@ -4,6 +4,7 @@ use crate::error::Result as CodexResult;
 use crate::thread_manager::ThreadManagerState;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 use std::sync::Arc;
 use std::sync::Weak;
@@ -38,6 +39,27 @@ impl AgentControl {
         // Notify a new thread has been created. This notification will be processed by clients
         // to subscribe or drain this newly created thread.
         // TODO(jif) add helper for drain
+        state.notify_thread_created(new_thread.thread_id);
+
+        self.send_prompt(new_thread.thread_id, prompt).await?;
+
+        Ok(new_thread.thread_id)
+    }
+
+    /// Spawn a new agent thread with a custom session source and submit the initial prompt.
+    /// Use this for subagent spawning to properly mark requests with SubAgent session source.
+    pub(crate) async fn spawn_agent_with_source(
+        &self,
+        config: crate::config::Config,
+        prompt: String,
+        session_source: SessionSource,
+    ) -> CodexResult<ThreadId> {
+        let state = self.upgrade()?;
+        let new_thread = state
+            .spawn_new_thread_with_source(config, self.clone(), session_source)
+            .await?;
+
+        // Notify a new thread has been created.
         state.notify_thread_created(new_thread.thread_id);
 
         self.send_prompt(new_thread.thread_id, prompt).await?;

@@ -544,6 +544,7 @@ impl Session {
             model_info: &model_info,
             features: &per_turn_config.features,
             web_search_mode: per_turn_config.web_search_mode,
+            subagent_depth: per_turn_config.subagent_depth,
         });
 
         TurnContext {
@@ -2415,6 +2416,8 @@ async fn spawn_review_thread(
         model_info: &review_model_info,
         features: &review_features,
         web_search_mode: Some(review_web_search_mode),
+        // Review inherits parent subagent depth context
+        subagent_depth: parent_turn_context.subagent_depth,
     });
 
     let base_instructions = REVIEW_PROMPT.to_string();

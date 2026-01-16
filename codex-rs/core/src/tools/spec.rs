@@ -29,12 +29,17 @@ pub(crate) struct ToolsConfig {
     pub web_search_mode: Option<WebSearchMode>,
     pub collab_tools: bool,
     pub experimental_supported_tools: Vec<String>,
+    /// Subagent depth context for controlling recursive spawning.
+    /// When Some, restricts tool availability based on depth.
+    pub subagent_depth: Option<codex_protocol::subagent::SubagentDepthContext>,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
     pub(crate) model_info: &'a ModelInfo,
     pub(crate) features: &'a Features,
     pub(crate) web_search_mode: Option<WebSearchMode>,
+    /// Subagent depth context, if this is a subagent session.
+    pub(crate) subagent_depth: Option<codex_protocol::subagent::SubagentDepthContext>,
 }
 
 impl ToolsConfig {
@@ -43,6 +48,7 @@ impl ToolsConfig {
             model_info,
             features,
             web_search_mode,
+            subagent_depth,
         } = params;
         let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_collab_tools = features.enabled(Feature::Collab);
@@ -78,7 +84,18 @@ impl ToolsConfig {
             web_search_mode: *web_search_mode,
             collab_tools: include_collab_tools,
             experimental_supported_tools: model_info.experimental_supported_tools.clone(),
+            subagent_depth: *subagent_depth,
         }
+    }
+
+    /// Returns true if this is a subagent (depth > 0).
+    pub fn is_subagent(&self) -> bool {
+        self.subagent_depth.map_or(false, |d| d.current > 0)
+    }
+
+    /// Returns true if subagent spawning is allowed at current depth.
+    pub fn can_spawn_subagent(&self) -> bool {
+        self.subagent_depth.map_or(true, |d| d.can_spawn_child())
     }
 }
 
@@ -1455,26 +1472,34 @@ pub(crate) fn build_specs(
     builder.register_handler("view_image", view_image_handler);
 
     if config.collab_tools {
-        let collab_handler = Arc::new(CollabHandler);
-        builder.push_spec(create_spawn_agent_tool());
-        builder.push_spec(create_send_input_tool());
-        builder.push_spec(create_wait_tool());
-        builder.push_spec(create_close_agent_tool());
-        builder.register_handler("spawn_agent", collab_handler.clone());
-        builder.register_handler("send_input", collab_handler.clone());
-        builder.register_handler("wait", collab_handler.clone());
-        builder.register_handler("close_agent", collab_handler);
+        // Original collab tools are ONLY available to main agent (depth 0).
+        // Subagents must use spawn_subagent which enforces depth/role limits.
+        // This prevents subagents from bypassing depth control via spawn_agent.
+        if !config.is_subagent() {
+            let collab_handler = Arc::new(CollabHandler);
+            builder.push_spec(create_spawn_agent_tool());
+            builder.push_spec(create_send_input_tool());
+            builder.push_spec(create_wait_tool());
+            builder.push_spec(create_close_agent_tool());
+            builder.register_handler("spawn_agent", collab_handler.clone());
+            builder.register_handler("send_input", collab_handler.clone());
+            builder.register_handler("wait", collab_handler.clone());
+            builder.register_handler("close_agent", collab_handler);
+        }
 
-        // Subagent tools (controlled recursive agents with depth tracking)
-        let subagent_handler = Arc::new(SubagentHandler);
-        builder.push_spec(create_spawn_subagent_tool());
-        builder.push_spec(create_get_subagent_status_tool());
-        builder.push_spec(create_wait_subagent_tool());
-        builder.push_spec(create_close_subagent_tool());
-        builder.register_handler("spawn_subagent", subagent_handler.clone());
-        builder.register_handler("get_subagent_status", subagent_handler.clone());
-        builder.register_handler("wait_subagent", subagent_handler.clone());
-        builder.register_handler("close_subagent", subagent_handler);
+        // Subagent tools: only available if spawning is allowed at current depth.
+        // At terminal depth (3), no spawning allowed - tools not registered.
+        if config.can_spawn_subagent() {
+            let subagent_handler = Arc::new(SubagentHandler);
+            builder.push_spec(create_spawn_subagent_tool());
+            builder.push_spec(create_get_subagent_status_tool());
+            builder.push_spec(create_wait_subagent_tool());
+            builder.push_spec(create_close_subagent_tool());
+            builder.register_handler("spawn_subagent", subagent_handler.clone());
+            builder.register_handler("get_subagent_status", subagent_handler.clone());
+            builder.register_handler("wait_subagent", subagent_handler.clone());
+            builder.register_handler("close_subagent", subagent_handler);
+        }
     }
 
     if let Some(mcp_tools) = mcp_tools {
@@ -1604,6 +1629,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&config, None).build();
 
@@ -1666,6 +1692,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
         assert_contains_tool_names(
@@ -1686,6 +1713,7 @@ mod tests {
             model_info: &model_info,
             features,
             web_search_mode,
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&tools_config, Some(HashMap::new())).build();
         let tool_names = tools.iter().map(|t| t.spec.name()).collect::<Vec<_>>();
@@ -1702,6 +1730,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -1724,6 +1753,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -1937,6 +1967,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&tools_config, Some(HashMap::new())).build();
 
@@ -1959,6 +1990,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -1978,6 +2010,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -2009,6 +2042,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(
             &tools_config,
@@ -2104,6 +2138,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
 
         // Intentionally construct a map with keys that would sort alphabetically.
@@ -2181,6 +2216,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
 
         let (tools, _) = build_specs(
@@ -2238,6 +2274,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
 
         let (tools, _) = build_specs(
@@ -2292,6 +2329,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
 
         let (tools, _) = build_specs(
@@ -2348,6 +2386,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
 
         let (tools, _) = build_specs(
@@ -2460,6 +2499,7 @@ Examples of valid command strings:
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            subagent_depth: None,
         });
         let (tools, _) = build_specs(
             &tools_config,

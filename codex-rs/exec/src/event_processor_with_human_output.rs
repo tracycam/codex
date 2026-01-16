@@ -581,6 +581,12 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::CollabCloseEnd(_) => {
                 // TODO(jif) handle collab tools.
             }
+            EventMsg::SubagentSpawnBegin(_)
+            | EventMsg::SubagentSpawnEnd(_)
+            | EventMsg::SubagentTaskComplete(_)
+            | EventMsg::SubagentProgress(_) => {
+                // Subagent events - not displayed for now.
+            }
             EventMsg::ShutdownComplete => return CodexStatus::Shutdown,
             EventMsg::WebSearchBegin(_)
             | EventMsg::ExecApprovalRequest(_)

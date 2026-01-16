@@ -3657,6 +3657,8 @@ model_verbosity = "high"
                 tui_scroll_invert: false,
                 tui_alternate_screen: AltScreenMode::Auto,
                 otel: OtelConfig::default(),
+                subagent_depth: None,
+                subagent_role: None,
             },
             o3_profile_config
         );
@@ -3744,6 +3746,8 @@ model_verbosity = "high"
             tui_scroll_invert: false,
             tui_alternate_screen: AltScreenMode::Auto,
             otel: OtelConfig::default(),
+            subagent_depth: None,
+            subagent_role: None,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -3846,6 +3850,8 @@ model_verbosity = "high"
             tui_scroll_invert: false,
             tui_alternate_screen: AltScreenMode::Auto,
             otel: OtelConfig::default(),
+            subagent_depth: None,
+            subagent_role: None,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -3934,6 +3940,8 @@ model_verbosity = "high"
             tui_scroll_invert: false,
             tui_alternate_screen: AltScreenMode::Auto,
             otel: OtelConfig::default(),
+            subagent_depth: None,
+            subagent_role: None,
         };
 
         assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);

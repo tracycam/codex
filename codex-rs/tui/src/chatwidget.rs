@@ -2453,6 +2453,11 @@ impl ChatWidget {
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_) => {}
+            // Subagent events - not displayed in TUI for now.
+            EventMsg::SubagentSpawnBegin(_)
+            | EventMsg::SubagentSpawnEnd(_)
+            | EventMsg::SubagentTaskComplete(_)
+            | EventMsg::SubagentProgress(_) => {}
         }
     }
 

@@ -309,6 +309,24 @@ impl ThreadManagerState {
         .await
     }
 
+    /// Spawn a new thread with no history using a provided config and custom session source.
+    /// Use this for subagent spawning to properly mark requests with SubAgent session source.
+    pub(crate) async fn spawn_new_thread_with_source(
+        &self,
+        config: Config,
+        agent_control: AgentControl,
+        session_source: SessionSource,
+    ) -> CodexResult<NewThread> {
+        self.spawn_thread_with_source(
+            config,
+            InitialHistory::New,
+            Arc::clone(&self.auth_manager),
+            agent_control,
+            session_source,
+        )
+        .await
+    }
+
     /// Spawn a new thread with optional history and register it with the manager.
     pub(crate) async fn spawn_thread(
         &self,
@@ -326,6 +344,31 @@ impl ThreadManagerState {
             Arc::clone(&self.skills_manager),
             initial_history,
             self.session_source.clone(),
+            agent_control,
+        )
+        .await?;
+        self.finalize_thread_spawn(codex, thread_id).await
+    }
+
+    /// Spawn a new thread with optional history and a custom session source.
+    /// Use this for subagent spawning to properly mark requests with SubAgent session source.
+    pub(crate) async fn spawn_thread_with_source(
+        &self,
+        config: Config,
+        initial_history: InitialHistory,
+        auth_manager: Arc<AuthManager>,
+        agent_control: AgentControl,
+        session_source: SessionSource,
+    ) -> CodexResult<NewThread> {
+        let CodexSpawnOk {
+            codex, thread_id, ..
+        } = Codex::spawn(
+            config,
+            auth_manager,
+            Arc::clone(&self.models_manager),
+            Arc::clone(&self.skills_manager),
+            initial_history,
+            session_source,
             agent_control,
         )
         .await?;

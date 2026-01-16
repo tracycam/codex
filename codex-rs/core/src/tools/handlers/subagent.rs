@@ -18,6 +18,8 @@ use crate::tools::registry::ToolKind;
 use async_trait::async_trait;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus as ProtocolAgentStatus;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::SubagentSpawnBeginEvent;
 use codex_protocol::protocol::SubagentSpawnEndEvent;
 use codex_protocol::protocol::SubagentTaskCompleteEvent;
@@ -139,6 +141,11 @@ struct WaitSubagentArgs {
     id: String,
     /// Timeout in milliseconds.
     timeout_ms: Option<u64>,
+    /// Role of the subagent (for result tracking).
+    #[serde(default)]
+    role: Option<SubagentRole>,
+    /// Depth of the subagent (for result tracking).
+    depth: Option<u8>,
 }
 
 /// Result for wait_subagent tool.
@@ -252,11 +259,14 @@ async fn spawn_subagent(
     // Build config for the subagent.
     let config = build_subagent_config(&turn, &args, child_depth)?;
 
-    // Spawn the subagent.
+    // Get the appropriate session source for the subagent role.
+    let session_source = role_to_session_source(args.role);
+
+    // Spawn the subagent with the proper session source for telemetry/routing.
     let spawn_result = session
         .services
         .agent_control
-        .spawn_agent(config, prompt)
+        .spawn_agent_with_source(config, prompt, session_source)
         .await;
 
     match spawn_result {
@@ -437,9 +447,10 @@ async fn wait_subagent(
         .unwrap_or(DEFAULT_SUBAGENT_TIMEOUT_MS)
         .min(MAX_SUBAGENT_TIMEOUT_MS);
 
-    // Get role and depth from the subagent's turn context if available.
-    let role = SubagentRole::General;
-    let depth = 1u8;
+    // Use provided role/depth or defaults for result tracking.
+    // Callers should provide these for accurate result metadata.
+    let role = args.role.unwrap_or(SubagentRole::General);
+    let depth = args.depth.unwrap_or(0);
 
     let result = wait_for_subagent_completion(&session, agent_id, timeout_ms, role, depth).await;
     let timed_out = matches!(result.status, SubagentResultStatus::TimedOut);
@@ -549,6 +560,9 @@ fn build_subagent_config(
     args: &SpawnSubagentArgs,
     child_depth: SubagentDepthContext,
 ) -> Result<Config, FunctionCallError> {
+    use codex_protocol::protocol::SandboxPolicy;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+
     let base_config = turn.client.config();
     let mut config = (*base_config).clone();
 
@@ -569,18 +583,56 @@ fn build_subagent_config(
     config.subagent_role = Some(args.role);
 
     // Apply role-specific sandbox policy.
-    if args.role.is_read_only() {
-        // Read-only roles get read-only sandbox by default.
-        config
-            .sandbox_policy
-            .set(codex_protocol::protocol::SandboxPolicy::new_read_only_policy())
-            .map_err(|e| FunctionCallError::RespondToModel(format!("Invalid sandbox policy: {e}")))?;
+    // For read-only roles, allow write access to report_path/plan_dir if provided.
+    let sandbox_policy = if args.role.is_read_only() {
+        // Collect writable paths for Review/Plan roles.
+        let mut writable_roots: Vec<AbsolutePathBuf> = Vec::new();
+
+        // Review role: allow writing to report_path if provided.
+        if args.role == SubagentRole::Review {
+            if let Some(ref report_path) = args.report_path {
+                if let Ok(abs_path) = AbsolutePathBuf::try_from(report_path.as_path()) {
+                    // Add parent directory of report file as writable root.
+                    if let Some(parent) = abs_path.parent() {
+                        // Parent of an AbsolutePathBuf is always absolute.
+                        let parent_abs = AbsolutePathBuf::try_from(parent)
+                            .expect("parent of absolute path is absolute");
+                        writable_roots.push(parent_abs);
+                    }
+                }
+            }
+        }
+
+        // Plan role: allow writing to plan_dir if provided.
+        if args.role == SubagentRole::Plan {
+            if let Some(ref plan_dir) = args.plan_dir {
+                if let Ok(abs_path) = AbsolutePathBuf::try_from(plan_dir.as_path()) {
+                    writable_roots.push(abs_path);
+                }
+            }
+        }
+
+        if writable_roots.is_empty() {
+            // No write paths provided, use read-only policy.
+            SandboxPolicy::new_read_only_policy()
+        } else {
+            // Allow workspace-write with specific writable roots.
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access: false,
+                exclude_tmpdir_env_var: false,
+                exclude_slash_tmp: false,
+            }
+        }
     } else {
-        config
-            .sandbox_policy
-            .set(turn.sandbox_policy.clone())
-            .map_err(|e| FunctionCallError::RespondToModel(format!("Invalid sandbox policy: {e}")))?;
-    }
+        // General role inherits parent sandbox policy.
+        turn.sandbox_policy.clone()
+    };
+
+    config
+        .sandbox_policy
+        .set(sandbox_policy)
+        .map_err(|e| FunctionCallError::RespondToModel(format!("Invalid sandbox policy: {e}")))?;
 
     config
         .approval_policy
@@ -671,6 +723,10 @@ async fn wait_for_subagent_completion(
     }
 }
 
+/// Grace period before auto-shutdown of background subagents (60 seconds).
+/// This gives time for wait_subagent to retrieve results before the agent is cleaned up.
+const BACKGROUND_SHUTDOWN_DELAY_MS: u64 = 60_000;
+
 /// Spawn a background task to watch for subagent completion and notify parent.
 fn spawn_background_watcher(
     session: Arc<Session>,
@@ -704,6 +760,11 @@ fn spawn_background_watcher(
                 .into(),
             )
             .await;
+
+        // Wait a grace period before shutdown to allow wait_subagent to retrieve results.
+        // This prevents a race condition where the agent is shutdown before
+        // wait_subagent can subscribe to its status.
+        tokio::time::sleep(Duration::from_millis(BACKGROUND_SHUTDOWN_DELAY_MS)).await;
 
         // Cleanup: shutdown the subagent.
         let _ = session
@@ -741,6 +802,17 @@ fn subagent_error(agent_id: ThreadId, err: CodexErr) -> FunctionCallError {
         }
         err => FunctionCallError::RespondToModel(format!("Subagent operation failed: {err}")),
     }
+}
+
+/// Convert a SubagentRole to SessionSource for proper telemetry/routing marking.
+fn role_to_session_source(role: SubagentRole) -> SessionSource {
+    let sub_source = match role {
+        SubagentRole::Review => SubAgentSource::Review,
+        SubagentRole::General => SubAgentSource::Other("general".to_string()),
+        SubagentRole::Analyse => SubAgentSource::Other("analyse".to_string()),
+        SubagentRole::Plan => SubAgentSource::Other("plan".to_string()),
+    };
+    SessionSource::SubAgent(sub_source)
 }
 
 #[cfg(test)]
